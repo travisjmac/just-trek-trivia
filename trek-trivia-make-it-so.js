@@ -2075,7 +2075,14 @@
     ".tt-diff-btn small{display:block;margin-top:8px;font-family:Trebuchet MS,Segoe UI,Verdana,sans-serif;font-size:18px;font-weight:700;line-height:1.3;}",
     ".tt-diff-btn.is-focus{outline:4px solid #fff;outline-offset:3px;}",
     "@media (prefers-reduced-motion:reduce){.tt-cell.is-cursor,.tt-core.is-panic .tt-core-readout,.tt-beat{animation:none;}}",
-    "@media (max-width:980px){.tt-cast,.tt-play,.tt-end,.tt-result,.tt-ask{grid-template-columns:1fr;}.tt-roster{flex-direction:row;overflow:auto;}.tt-answers{grid-template-columns:1fr;}}"
+    "@media (max-width:980px){.tt-cast,.tt-play,.tt-end,.tt-result,.tt-ask{grid-template-columns:1fr;}.tt-roster{flex-direction:row;overflow:auto;}.tt-answers{grid-template-columns:1fr;}}",
+    ".tt-credits{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(8,4,16,.78);}",
+    ".tt-credits[hidden]{display:none !important;}",
+    ".tt-credits-card{width:min(28rem,100%);max-height:min(84vh,560px);overflow:auto;background:#f7f9ff;color:#1c1917;border:4px solid #7ea2e8;border-radius:18px;padding:16px 18px 18px;box-shadow:0 14px 0 rgba(0,0,0,.28);text-align:center;user-select:text;}",
+    ".tt-root .tt-credits-card .tt-credits-name{margin:0 0 8px;font:700 1.15rem/1.3 Georgia,'Times New Roman',serif;color:#142033;}",
+    ".tt-root .tt-credits-card p{margin:0 0 8px;font:600 15px/1.45 'Segoe UI',system-ui,sans-serif;color:#1c1917;text-align:center;}",
+    ".tt-root .tt-credits-card a{color:#1d4ed8;}",
+    ".tt-root button.tt-credits-close{margin-top:6px;font:700 14px/1 'Segoe UI',system-ui,sans-serif;color:#fff8ea;background:#146b45;border:2px solid #e0b56a;border-radius:999px;padding:7px 14px;cursor:pointer;}"
   ].join("");
 
   function mount(el) {
@@ -2150,7 +2157,8 @@
       "<div class='tt-brand'><img class='tt-logo' alt='Just Trek Trivia. Make it so.' src='" + scriptBase() + "just-trek-trivia-logo.png'></div>",
       "<div class='tt-chips'><span class='tt-leftnote' data-left>Choose a crew</span>",
       "<button type='button' class='tt-chip' data-act='timer' data-timer-toggle>TIMER ON</button>",
-      "<button type='button' class='tt-chip' data-act='pause'>Pause</button></div>",
+      "<button type='button' class='tt-chip' data-act='pause'>Pause</button>",
+      "<button type='button' class='tt-chip' data-credits aria-haspopup='dialog' aria-expanded='false'>Credits</button></div>",
       "</header>",
       "<div class='tt-stage' data-screen='cast'></div>",
       "<footer class='tt-help'>Arrows move · 1–4 or A–D answer · Make it so submits · Say a category and a value · Say okay, next, or board to go back · T timer · P pause · R restart · Esc quit</footer>",
@@ -2163,7 +2171,16 @@
       "<button type='button' data-act='pause'>Resume</button>",
       "<button type='button' data-act='restart'>Restart</button>",
       "<button type='button' data-act='quit'>Quit</button>",
-      "</div></div></div>"
+      "</div></div></div>",
+      "<div class='tt-credits' data-credits hidden>",
+      "<div class='tt-credits-card' role='dialog' aria-modal='true' aria-label='Credits'>",
+      "<p class='tt-credits-name'>Travis MacDonald</p>",
+      "<p><a href='https://travisjmac.com'>https://travisjmac.com</a></p>",
+      "<p><a href='mailto:travis@travisjmac.com'>travis@travisjmac.com</a></p>",
+      "<p>Hope you like these. They were fun to make.</p>",
+      "<p>Use that urge to create. Building something you care about lasts longer than tearing something down. Enjoy these, then go make your own.</p>",
+      "<button type='button' class='tt-credits-close'>Close</button>",
+      "</div></div>"
     ].join("");
     var style = document.createElement("style");
     style.textContent = "@font-face{font-family:Audiowide;src:url('" + scriptBase() + "fonts/Audiowide-Regular.ttf') format('truetype');font-weight:400;font-style:normal;font-display:swap;}@font-face{font-family:Michroma;src:url('" + scriptBase() + "fonts/Michroma-Regular.ttf') format('truetype');font-weight:400;font-style:normal;font-display:swap;}" + CSS;
@@ -3702,6 +3719,17 @@
 
     function onKey(e) {
       if (!alive || !el.isConnected) return;
+      var inCreditsUi = !!(e.target && e.target.closest && e.target.closest("[data-credits]"));
+      if (creditsOpen) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closeCredits();
+        } else if (!inCreditsUi) {
+          e.preventDefault();
+        }
+        return;
+      }
+      if (inCreditsUi && e.key !== "Escape") return;
       var tag = e.target && e.target.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || (e.target && e.target.isContentEditable)) return;
       if (e.repeat) return;
@@ -3763,6 +3791,8 @@
 
     function onKeyUp(e) {
       if (!alive) return;
+      if (creditsOpen) return;
+      if (e.target && e.target.closest && e.target.closest("[data-credits]")) return;
       if (e.key === " " || e.key === "Enter") e.preventDefault();
     }
 
@@ -3839,6 +3869,34 @@
       joinHail(input ? input.value : "");
     }
 
+    var creditsBtn = root.querySelector("button[data-credits]");
+    var creditsLayer = root.querySelector(".tt-credits");
+    var creditsClose = root.querySelector(".tt-credits-close");
+    var creditsOpen = false;
+    function openCredits() {
+      creditsOpen = true;
+      creditsLayer.hidden = false;
+      creditsBtn.setAttribute("aria-expanded", "true");
+      creditsClose.focus();
+    }
+    function closeCredits() {
+      if (!creditsOpen) return;
+      creditsOpen = false;
+      creditsLayer.hidden = true;
+      creditsBtn.setAttribute("aria-expanded", "false");
+      creditsBtn.focus({ preventScroll: true });
+    }
+    creditsBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      openCredits();
+    });
+    creditsClose.addEventListener("click", function (e) {
+      e.stopPropagation();
+      closeCredits();
+    });
+    creditsLayer.addEventListener("click", function (e) {
+      if (e.target === creditsLayer) closeCredits();
+    });
     root.addEventListener("click", onClick);
     root.addEventListener("submit", onSubmit);
     document.addEventListener("keydown", onKey, true);
