@@ -2002,6 +2002,9 @@
     ".tt-choice b{position:absolute;left:14px;top:24px;width:54px;height:54px;border-radius:14px;display:grid;place-items:center;background:#24182c;color:#ffd56a;font-size:26px;}",
     ".tt-choice.is-selected{background:#f0c14a;color:#2a1c08;border-color:#fff4c8;}",
     ".tt-choice.is-selected b{background:#2a1c08;color:#ffd56a;}",
+    ".tt-choice.is-missed{border-color:#e23b45;opacity:0.72;}",
+    ".tt-missed{margin:8px 0 0;color:#ffb4c0;font-weight:800;}",
+    ".tt-pass{display:block;width:100%;margin-top:8px;background:transparent;color:#ffe9a8;border:2px solid rgba(255,233,168,0.45);border-radius:14px;padding:12px;font-size:18px;font-weight:800;}",
     ".tt-lock{margin-top:12px;align-self:stretch;width:100%;text-align:center;background:linear-gradient(#ffe08a,#f0b429);color:#1a1008;border-radius:18px;padding:18px 20px;min-height:76px;font-size:28px;font-weight:800;box-shadow:0 4px 0 #8a6420;letter-spacing:0.03em;}",
     ".tt-result{display:grid;grid-template-columns:200px 1fr;gap:12px;align-items:center;}",
     ".tt-result h2{margin:0 0 6px;font-size:clamp(28px,4vw,48px);}",
@@ -2313,8 +2316,8 @@
         "<h2>Who's on this mission?</h2>",
         "<ul class='tt-rules'>",
         "<li>", remote ? "Pick your officer" : "Pick 1 to 4 officers", "</li>",
-        "<li>Everyone locks together</li>",
-        "<li>First correct scores full</li>",
+        "<li>", remote ? "Everyone locks together" : "Take turns answering", "</li>",
+        "<li>", remote ? "First correct scores full" : "A miss opens one steal", "</li>",
         "<li>High score wins</li>",
         "</ul>",
         "<div class='tt-seats'>", seats, "</div>",
@@ -2331,7 +2334,7 @@
         var crew = crewById(p.id);
         var note = ribbon(index);
         return [
-          "<article class='tt-crew", index === session.active && session.screen === "board" ? " is-active" : "",
+          "<article class='tt-crew", (session.screen === "board" && index === session.active) || (session.local && session.screen === "question" && index === session.local.actor) ? " is-active" : "",
           "' style='--crew:", crew.color, "'>",
           portrait(p.id, 64),
           "<div><strong>", esc(p.short), "</strong><em>", p.score, "</em>",
@@ -2344,6 +2347,10 @@
     function ribbon(index) {
       var p = session.players[index];
       if (!p) return "";
+      if (session.screen === "question" && session.local) {
+        if (index !== session.local.actor) return "";
+        return session.local.phase === "steal" ? "Stealing" : "Answering";
+      }
       if (session.screen === "question" && session.round) {
         return session.round.locks[index] ? "Locked" : "Answering";
       }
@@ -2372,10 +2379,17 @@
         ].join("");
       }).join("");
       var levelName = levelLabel(session.level);
-      return "<div class='tt-screen'>" + hailStatus() + (session.mic === "off" ? "" : micBlock()) + "<p class='tt-legend'>" + esc(who) + " picks the cell on " + esc(levelName) + ". Everyone answers it. First correct answer scores the cell. A later correct answer scores half. Holodeck adds 200.</p><div class='tt-board'>" + heads + cells + "</div></div>";
+      var next = session.players[(session.active + 1) % session.players.length];
+      var legend = remotePlay()
+        ? esc(who) + " picks the cell on " + esc(levelName) + ". Everyone answers it. First correct answer scores the cell. A later correct answer scores half. Holodeck adds 200."
+        : session.players.length < 2
+          ? esc(who) + " picks the cell on " + esc(levelName) + ". A right answer scores the full points. A miss scores nothing. Holodeck adds 200."
+          : esc(who) + " picks the cell on " + esc(levelName) + " and answers it. A right answer scores the full points. A miss gives " + esc(next.short) + " one steal for those points. Holodeck adds 200.";
+      return "<div class='tt-screen'>" + hailStatus() + (session.mic === "off" ? "" : micBlock()) + "<p class='tt-legend'>" + legend + "</p><div class='tt-board'>" + heads + cells + "</div></div>";
     }
 
     function questionHTML() {
+      if (session.local) return localQuestionHTML();
       var cell = session.cell;
       var q = session.question;
       var round = session.round;
@@ -2421,18 +2435,68 @@
       ].join("");
     }
 
+    function localQuestionHTML() {
+      var cell = session.cell;
+      var q = session.question;
+      var turn = session.local;
+      if (!cell || !q || !q.a || !turn) {
+        return "<div class='tt-screen' data-question='open'>" + hailStatus() + "<p class='tt-q'>Waiting for the question.</p></div>";
+      }
+      var person = session.players[turn.actor];
+      var crew = crewById(person.id);
+      var title = COLS[cell.col].name + " for " + cell.value;
+      var status = turn.phase === "steal" ? "Stealing" : "Answering";
+      var missed = "";
+      if (turn.phase === "steal") {
+        var picker = session.players[session.active];
+        missed = turn.guess >= 0
+          ? "<p class='tt-missed'>" + esc(picker.short) + " guessed " + "ABCD".charAt(turn.guess) + ". That missed.</p>"
+          : "<p class='tt-missed'>" + esc(picker.short) + " did not answer.</p>";
+      }
+      var choices = "<div class='tt-answers'>" + q.a.map(function (text, i) {
+        var missedChoice = turn.phase === "steal" && i === turn.guess;
+        return "<button type='button' class='tt-choice" + (turn.pick === i ? " is-selected" : "") + (missedChoice ? " is-missed" : "") + "' data-act='choice' data-player='" + turn.actor + "' data-choice='" + i + "'" + (missedChoice ? " disabled" : "") + "><b>" + "ABCD".charAt(i) + "</b>" + esc(text) + "</button>";
+      }).join("") + "</div><button type='button' class='tt-lock' data-act='lock' data-player='" + turn.actor + "'>Make it so</button>" +
+        (turn.phase === "steal" ? "<button type='button' class='tt-pass' data-act='pass'>Pass</button>" : "");
+      return [
+        "<div class='tt-screen' data-question='open' data-local='1'>",
+        "<div class='tt-qhead'><b>", esc(title), "</b><span>", esc(person.short), " · ", status, "</span></div>",
+        hailStatus(),
+        "<div class='tt-banner'>", esc(bannerText()), "</div>",
+        timerBlock(),
+        "<p class='tt-q'>", esc(q.q), "</p>",
+        missed,
+        "<div class='tt-pads'><section class='tt-pad is-pad' style='--crew:", crew.color, "'>",
+        portrait(person.id, 72),
+        "<div class='tt-pad-body'><strong>", esc(person.short), "</strong><span>", status, "</span>",
+        choices,
+        "</div></section></div></div>"
+      ].join("");
+    }
+
     function timerBlock() {
       var secs = !session.timerOn ? "OFF" : String(Math.max(0, Math.ceil(session.remainMs / 1000)));
-      return "<div class='tt-coreline'><div class='tt-core" + (!session.timerOn ? " is-off" : "") + "'><canvas data-draw='core'></canvas><div class='tt-core-readout'><span>SHARED CLOCK</span><b data-timer>" + secs + "</b></div></div><span class='tt-mascot'>" + portrait("brick", 72) + "</span></div>";
+      return "<div class='tt-coreline'><div class='tt-core" + (!session.timerOn ? " is-off" : "") + "'><canvas data-draw='core'></canvas><div class='tt-core-readout'><span>" + (remotePlay() ? "SHARED CLOCK" : "CLOCK") + "</span><b data-timer>" + secs + "</b></div></div><span class='tt-mascot'>" + portrait("brick", 72) + "</span></div>";
     }
 
     function bannerText() {
-      var bits = ["One clock for the whole bridge. Lock with Make it so. Nothing is marked right or wrong until the clock ends or every officer locks."];
-      if (session.qEffect === "double") bits.push("Q doubled the points. First correct answer takes the doubled score.");
-      if (session.qEffect === "everyone") bits.push("Q put the whole bridge on this question.");
+      var actor = session.local ? session.players[session.local.actor] : null;
+      var next = session.players.length ? session.players[(session.active + 1) % session.players.length] : null;
+      var bits = [];
+      if (session.local && session.local.phase === "steal") {
+        bits.push(actor.short + " can steal this card for the full points. The right choice stays hidden until the steal is taken or passed.");
+      } else if (session.local && session.players.length < 2) {
+        bits.push(actor.short + " answers. A right answer scores the full points. A miss scores nothing.");
+      } else if (session.local) {
+        bits.push(actor.short + " answers. A miss gives " + next.short + " one steal for the full points.");
+      } else {
+        bits.push("One clock for the whole bridge. Lock with Make it so. Nothing is marked right or wrong until the clock ends or every officer locks.");
+      }
+      if (session.qEffect === "double") bits.push(remotePlay() ? "Q doubled the points. First correct answer takes the doubled score." : "Q doubled the points.");
+      if (session.qEffect === "everyone" && remotePlay()) bits.push("Q put the whole bridge on this question.");
       if (session.qEffect === "swap" && session.swapNote) bits.push(session.swapNote);
       if (session.cell && session.cell.special === "holodeck") bits.push("Holodeck adds 200 to the cell.");
-      if (session.cell && session.cell.special === "warp") bits.push("Warp core. First correct answer still takes the full points.");
+      if (session.cell && session.cell.special === "warp") bits.push(remotePlay() ? "Warp core. First correct answer still takes the full points." : "Warp core. A right answer scores the full points.");
       return bits.join(" ");
     }
 
@@ -3200,6 +3264,7 @@
       session.cell = null;
       session.question = null;
       session.round = null;
+      session.local = null;
       session.result = null;
       session.tied = [];
       session.winner = -1;
@@ -3261,6 +3326,7 @@
       session.qEffect = "";
       session.swapNote = "";
       session.round = null;
+      session.local = null;
       session.hintFor = null;
       if (cell.special === "q") {
         var roll = ["double", "swap", "skip", "everyone"][Math.floor(Math.random() * 4)];
@@ -3308,16 +3374,88 @@
 
     function startQuestion() {
       session.question = questionFor(session.cell);
+      ensureHint();
+      session.screen = "question";
+      arm(30000);
+      if (!remotePlay()) {
+        session.round = null;
+        session.local = { phase: "answer", actor: session.active, pick: -1, guess: -1 };
+        render();
+        return;
+      }
+      session.local = null;
       session.round = {
         picks: session.players.map(function () { return -1; }),
         locks: session.players.map(function () { return null; }),
         order: [],
-        pad: 0
+        pad: session.net.self || 0
       };
-      ensureHint();
-      session.screen = "question";
+      render();
+    }
+
+    function finishLocal(ok, points, actor, headline, detail) {
+      session.timerLive = false;
+      var q = session.question;
+      if (points) session.players[actor].score += points;
+      session.result = {
+        kind: "local",
+        ok: !!ok,
+        headline: headline,
+        detail: detail,
+        answer: (q.c + 1) + ". " + q.a[q.c]
+      };
+      session.local = null;
+      session.screen = "result";
+      celebrate(!!ok);
+      render();
+    }
+
+    function openSteal(guess) {
+      session.local.phase = "steal";
+      session.local.guess = guess;
+      session.local.pick = -1;
+      session.local.actor = (session.active + 1) % session.players.length;
       arm(30000);
       render();
+    }
+
+    function lockLocal() {
+      var turn = session.local;
+      if (!turn || session.screen !== "question" || !session.question) return;
+      if (turn.pick < 0 || (turn.phase === "steal" && turn.pick === turn.guess)) {
+        shakeStage();
+        return;
+      }
+      var person = session.players[turn.actor];
+      var full = pointsFor(session.cell);
+      var ok = turn.pick === session.question.c;
+      if (turn.phase === "answer") {
+        if (ok) finishLocal(true, full, turn.actor, person.short + " takes it", person.short + " scores the full " + full + ".");
+        else if (session.players.length >= 2) openSteal(turn.pick);
+        else finishLocal(false, 0, turn.actor, "Nobody takes it", person.short + " misses. No points.");
+        return;
+      }
+      finishLocal(ok, ok ? full : 0, turn.actor, ok ? person.short + " takes the steal" : "Nobody takes it", ok ? person.short + " steals the full " + full + "." : person.short + " misses the steal. No points.");
+    }
+
+    function passLocal() {
+      if (!session.local || session.local.phase !== "steal") return;
+      var person = session.players[session.local.actor];
+      finishLocal(false, 0, session.local.actor, "The steal is passed", person.short + " passes. No points.");
+    }
+
+    function localTimeout() {
+      if (!session.local || session.screen !== "question") return;
+      session.timerLive = false;
+      session.remainMs = 0;
+      var turn = session.local;
+      var person = session.players[turn.actor];
+      if (turn.phase === "answer") {
+        if (session.players.length >= 2) openSteal(-1);
+        else finishLocal(false, 0, turn.actor, "Nobody takes it", person.short + " runs out of time. No points.");
+        return;
+      }
+      passLocal();
     }
 
     function lockPad(index, fromPeer) {
@@ -3360,7 +3498,7 @@
     }
 
     function revealRound() {
-      if (session.net.role === "guest") return;
+      if (!remotePlay() || session.net.role === "guest") return;
       if (session.screen !== "question" || !session.round || !session.question) return;
       session.timerLive = false;
       var q = session.question;
@@ -3425,6 +3563,7 @@
       }
       session.active = (session.active + 1) % session.players.length;
       session.round = null;
+      session.local = null;
       session.screen = "board";
       render();
     }
@@ -3451,7 +3590,8 @@
       if (!session.timerLive) return;
       session.timerLive = false;
       session.remainMs = 0;
-      if (session.screen === "question") revealRound();
+      if (session.screen === "question" && session.local) localTimeout();
+      else if (session.screen === "question") revealRound();
     }
 
     function toggleTimer() {
@@ -3484,6 +3624,7 @@
       session.players = [];
       session.cells = [];
       session.result = null;
+      session.local = null;
       session.multi = null;
       session.koba = null;
       session.bursts = [];
@@ -3612,6 +3753,23 @@
       }
       if (session.screen === "result") {
         if (isBoardReturn(said)) continueResult();
+        return;
+      }
+      if (session.screen === "question" && session.local) {
+        var localTurn = session.local;
+        if (localTurn.phase === "steal" && hasPhrase(said, "pass")) {
+          passLocal();
+          return;
+        }
+        var localQ = session.question;
+        var localClean = said.replace(/\bmake it so\b/g, " ").replace(/\s+/g, " ").trim();
+        var localPick = localQ ? matchChoice(localClean, localQ.a) : -1;
+        if (localPick >= 0 && !(localTurn.phase === "steal" && localPick === localTurn.guess)) localTurn.pick = localPick;
+        if (hasMakeItSo(said)) {
+          lockLocal();
+          return;
+        }
+        if (localPick >= 0) render();
         return;
       }
       if (session.screen === "question" && session.round) {
@@ -3753,6 +3911,16 @@
       if (session.screen === "cast") { castKey(key); return; }
       if (session.screen === "diff") { diffKey(key); return; }
       if (session.screen === "board") { boardKey(key); return; }
+      if (asking && session.local) {
+        var localNum = choiceIndexFromKey(key);
+        if (localNum >= 0 && !(session.local.phase === "steal" && localNum === session.local.guess)) {
+          session.local.pick = localNum;
+          render();
+          return;
+        }
+        if (key === "Enter") lockLocal();
+        return;
+      }
       if (asking && session.round) {
         if (remotePlay()) {
           var mine = session.net.self;
@@ -3806,6 +3974,27 @@
       }
       if (!session.paused && screenEl && session.screen === "result") {
         continueResult();
+        return;
+      }
+      if (!session.paused && screenEl && session.screen === "question" && session.local) {
+        if (t && t.dataset.act === "choice") {
+          var localChoice = Number(t.dataset.choice);
+          if (session.local.phase === "steal" && localChoice === session.local.guess) {
+            shakeStage();
+            return;
+          }
+          session.local.pick = localChoice;
+          render();
+          return;
+        }
+        if (t && t.dataset.act === "lock") {
+          lockLocal();
+          return;
+        }
+        if (t && t.dataset.act === "pass") {
+          passLocal();
+          return;
+        }
         return;
       }
       if (!session.paused && screenEl && session.screen === "question" && session.round) {
